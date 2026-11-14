@@ -1,0 +1,53 @@
+# media-butler — example configuration
+# Copy to /etc/media-butler/config.toml and adjust the paths.
+# This file must NOT contain secrets if you push it to git: use the separate
+# files for the token and the API key.
+
+# Path to the SQLite (WAL) state. The directory is created automatically.
+database = "/var/lib/media-butler/state.db"
+
+[telegram]
+# Either option: a file (recommended, 600 root:root) or a direct token.
+token_file = "/etc/media-butler/token"
+# token = "123456:ABC..."
+# Numeric IDs allowed to use the bot. Leave it empty the first time, send
+# /start to the bot and copy the ID it replies with.
+allowed_users = [0]
+# Optional. If 0, the first allowed_users entry is used (private chat).
+chat_id = 0
+
+[paths]
+# All paths must be absolute and must exist before starting.
+# The service runs as root because only root can write these directories.
+inbox = "/mnt/media/inbox"
+kids = "/mnt/media/Kids"
+movies = "/mnt/media/Movies"
+series = "/mnt/media/Series"
+
+[scan]
+interval_seconds = 300      # how often the inbox is scanned
+settle_seconds = 120        # unchanged size required before touching a file
+max_pending = 10            # unanswered prompts before scanning pauses
+max_entries = 100000        # file limit when sizing a directory
+seven_zip = "7z"
+# video_extensions = [".mkv", ".mp4", ...]   # optional: overrides the list
+# archive_extensions = [".zip", ".rar", ".7z", ...]
+# skip_suffixes = [".part", ".!qb", ".crdownload", ".aria2", ".tmp"]
+
+[behavior]
+delete_archive = true       # delete the archive once everything moved
+dry_run = false             # true: simulate moves and reboots
+
+[emby]
+enabled = true
+url = "http://127.0.0.1:8096"
+api_key_file = "/etc/media-butler/emby.key"
+# api_key = "..."
+
+[reboot]
+countdown_seconds = 10
+cooldown_seconds = 300      # minimum time between reboots
+notify_on_boot = true       # notify when the server is back after /reboot
+
+[logging]
+level = "INFO"

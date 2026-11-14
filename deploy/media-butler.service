@@ -1,0 +1,33 @@
+[Unit]
+Description=media-butler (Telegram media sorter + reboot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=@PROJECT@
+ExecStart=@PROJECT@/venv/bin/python -m media_butler --config /etc/media-butler/config.toml
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=20
+Environment=PYTHONUNBUFFERED=1
+
+# Hardening. The bot needs root only to write the media directories and to
+# call `systemctl reboot`; everything else is locked down.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ReadWritePaths=@READWRITE@
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
