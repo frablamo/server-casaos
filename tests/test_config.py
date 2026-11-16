@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -85,3 +86,46 @@ enabled = false
     )
     with pytest.raises(ConfigError):
         load_config(config_file, check_paths=False)
+
+
+def write_config_with_inbox(tmp_path: Path, inbox: str) -> Path:
+    token = tmp_path / "token"
+    token.write_text("x", encoding="utf-8")
+    config_file = tmp_path / "config.toml"
+    config_file.write_text(
+        f"""
+database = {json.dumps(str(tmp_path / "state.db"))}
+[telegram]
+token_file = {json.dumps(str(token))}
+allowed_users = [1]
+[paths]
+inbox = {json.dumps(inbox)}
+kids = {json.dumps(str(tmp_path / "kids"))}
+movies = {json.dumps(str(tmp_path / "movies"))}
+series = {json.dumps(str(tmp_path / "series"))}
+[emby]
+enabled = false
+""",
+        encoding="utf-8",
+    )
+    return config_file
+
+
+def test_path_with_a_carriage_return_is_rejected(tmp_path: Path):
+    config_file = write_config_with_inbox(tmp_path, str(tmp_path / "in\rbox"))
+    with pytest.raises(ConfigError, match="non-printable character U\\+000D"):
+        load_config(config_file, check_paths=False)
+
+
+def test_path_with_a_zero_width_space_is_rejected(tmp_path: Path):
+    config_file = write_config_with_inbox(tmp_path, str(tmp_path / "in\u200bbox"))
+    with pytest.raises(ConfigError, match="non-printable"):
+        load_config(config_file, check_paths=False)
+
+
+def test_path_with_a_normal_space_is_accepted(tmp_path: Path):
+    inbox = tmp_path / "My Inbox"
+    inbox.mkdir()
+    config_file = write_config_with_inbox(tmp_path, str(inbox))
+    config = load_config(config_file, check_paths=False)
+    assert config.paths.inbox == inbox

@@ -66,9 +66,12 @@ The installer:
 4. Writes `/etc/media-butler/config.toml` (600) and the secrets separately.
 5. Generates and starts `media-butler.service`.
 6. Runs `media-butler --check` to verify paths, write access and `7z`.
+7. Validates the generated unit with `systemd-analyze verify` before starting it.
 
 If `/etc/media-butler/config.toml` already exists, it **does not ask again**: it
-only updates the code and restarts the service.
+only updates the code and restarts the service. To answer the questions again
+and rewrite the config, run `sudo ./deploy/install.sh --reconfigure` (leave a
+secret empty to keep the one already stored).
 
 ### First run on Telegram
 
@@ -85,6 +88,24 @@ only updates the code and restarts the service.
 
 Only the IDs in `allowed_users` can use buttons and commands. Anyone else gets
 a notice with their own ID and nothing else.
+
+### Using a group
+
+1. Add the bot to the group.
+2. Send `/start@YourBot` in the group (this works even with the default privacy
+   mode, which hides ordinary messages from bots).
+3. The bot replies with your `user_id` and the group `chat_id`, a negative
+   number such as `-1001234567890`.
+4. Put both in the config and restart:
+
+   ```toml
+   [telegram]
+   allowed_users = [123456789]
+   chat_id = -1001234567890
+   ```
+
+Prompts then go to the group. Only IDs listed in `allowed_users` can press the
+buttons; everyone else gets "Not authorized".
 
 ## Configuration
 
@@ -225,6 +246,7 @@ sudo rm -rf /opt/media-butler
 | The bot does not respond | check the token, `journalctl` and that no other instance uses the same token (Telegram allows only one polling) |
 | `Conflict: terminated by other getUpdates` | two processes are using the same token; stop one (`systemctl stop media-butler` before a `--dry-run`) |
 | `Not authorized` | add your `user_id` to `allowed_users` and restart |
+| `media-butler.service` fails to load, `invalid` / `non-printable` / `Failed to extract first word` | a path contains an invisible character (CR from a Windows clipboard, zero-width space, non-breaking space). Run `sudo ./deploy/install.sh --reconfigure` and retype the paths, or fix `[paths]` in `/etc/media-butler/config.toml` by hand. `--check` now reports the exact `U+XXXX` character. |
 | A `.rar` stays blocked | it may need a password or contain symlinks; check the message and the log |
 | Emby does not refresh | try `curl -X POST -H "X-Emby-Token: ..." http://127.0.0.1:8096/Library/Refresh` |
 | `/reboot` fails | check `journalctl -u media-butler`; the service needs systemd as PID 1 |

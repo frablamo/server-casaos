@@ -156,3 +156,44 @@ async def test_handle_retry_deletes_blocked_item(build_config, tmp_path: Path, m
     for task in list(bot._tasks):
         await task
     assert any(text == "retry-scan" for _, _, text in fake.edits)
+
+
+class FakeMessage:
+    def __init__(self) -> None:
+        self.replies: list[str] = []
+
+    async def reply_text(self, text, **kwargs):
+        self.replies.append(text)
+        return SimpleNamespace(message_id=1)
+
+
+def start_update(user_id: int, chat_id: int, chat_type: str):
+    message = FakeMessage()
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=user_id, username="someone"),
+        effective_chat=SimpleNamespace(id=chat_id, type=chat_type),
+        message=message,
+    )
+    return update, message
+
+
+@pytest.mark.asyncio
+async def test_start_in_a_group_reveals_the_chat_id(build_config, tmp_path: Path):
+    bot, _, _ = make_bot(build_config, tmp_path)
+    update, message = start_update(999, -1001234567890, "supergroup")
+
+    await bot.cmd_start(update, SimpleNamespace())
+
+    assert message.replies
+    assert "999" in message.replies[0]
+    assert "-1001234567890" in message.replies[0]
+
+
+@pytest.mark.asyncio
+async def test_start_in_a_private_chat_does_not_show_a_chat_id(build_config, tmp_path: Path):
+    bot, _, _ = make_bot(build_config, tmp_path)
+    update, message = start_update(999, 999, "private")
+
+    await bot.cmd_start(update, SimpleNamespace())
+
+    assert "chat_id is" not in message.replies[0]

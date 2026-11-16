@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import tomllib
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -116,8 +117,26 @@ def _get_int_list(table: dict[str, Any], key: str) -> tuple[int, ...]:
     return tuple(result)
 
 
+def _reject_non_printable(value: str, key: str) -> str:
+    """Refuse paths systemd cannot represent in a unit file.
+
+    A carriage return from a Windows clipboard, a zero-width space or a
+    non-breaking space pasted from a web page all look identical on screen but
+    make ``ReadWritePaths`` unparseable.  Rejecting them here turns a cryptic
+    systemd failure into an actionable message.
+    """
+    for char in value:
+        category = unicodedata.category(char)
+        if category in ("Cc", "Cf") or (category == "Zs" and char != " "):
+            raise ConfigError(
+                f"'{key}' contains a non-printable character U+{ord(char):04X}; "
+                "retype the path instead of pasting it"
+            )
+    return value
+
+
 def _absolute_path(value: str, key: str) -> Path:
-    expanded = os.path.expanduser(value)
+    expanded = os.path.expanduser(_reject_non_printable(value, key))
     path = Path(expanded)
     if not expanded:
         raise ConfigError(f"'{key}' cannot be empty")

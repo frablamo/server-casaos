@@ -553,16 +553,23 @@ class MediaButlerBot:
         user = update.effective_user
         if update.message is None or user is None:
             return
+        chat = update.effective_chat
+        group_hint = ""
+        if chat is not None and chat.type in ("group", "supergroup"):
+            group_hint = (
+                f"\n\nThis chat_id is: {chat.id}\n"
+                "Use it as telegram.chat_id to receive the prompts in this group."
+            )
         if not self._is_allowed(user):
             log.warning("unauthorized user: %s (@%s)", user.id, user.username)
             await update.message.reply_text(
                 "🔒 Not authorized.\n\n"
                 f"Your Telegram user_id is: {user.id}\n\n"
                 "Add it to telegram.allowed_users in /etc/media-butler/config.toml "
-                "and restart the service."
+                "and restart the service." + group_hint
             )
             return
-        await update.message.reply_text(HELP_TEXT)
+        await update.message.reply_text(HELP_TEXT + group_hint)
 
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not self._is_allowed(update.effective_user):

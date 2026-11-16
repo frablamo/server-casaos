@@ -5,6 +5,7 @@
 #
 # Interactive on the first run. If /etc/media-butler/config.toml already exists
 # it does not ask again: it only reinstalls the code and restarts the service.
+# Pass --reconfigure to answer the questions again and rewrite the config.
 set -euo pipefail
 
 INSTALL_DIR="/opt/media-butler"
@@ -17,6 +18,53 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 say() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33mwarning: %s\033[0m\n' "$*" >&2; }
 die() { printf '\033[1;31merror: %s\033[0m\n' "$*" >&2; exit 1; }
+
+# A CR left by a Windows clipboard, a tab or an exotic space is invisible in
+# the terminal but makes the systemd unit unparseable.  Strip them before they
+# reach the config or the unit file.
+clean_input() {
+    local value="$1"
+    value="${value//$'\r'/}"
+    value="${value//$'\t'/}"
+    value="$(printf '%s' "$value" \
+        | tr -d '\001-\010\013\014\016-\037\177' \
+        | sed -e 's/\xc2\xa0/ /g' -e 's/\xe2\x80\x8b//g' -e 's/\xe2\x80\x8c//g' \
+              -e 's/\xe2\x80\x8d//g' -e 's/\xef\xbb\xbf//g')"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s' "$value"
+}
+
+ask() {
+    local prompt="$1" variable="$2" value
+    read -r -p "$prompt" value
+    printf -v "$variable" '%s' "$(clean_input "$value")"
+}
+
+ask_secret() {
+    local prompt="$1" variable="$2" value
+    read -r -s -p "$prompt" value
+    echo
+    printf -v "$variable" '%s' "$(clean_input "$value")"
+}
+
+RECONFIGURE=0
+for argument in "$@"; do
+    case "$argument" in
+        --reconfigure) RECONFIGURE=1 ;;
+        -h|--help)
+            cat <<'USAGE'
+Usage: sudo ./deploy/install.sh [--reconfigure]
+
+  --reconfigure   ask for the paths and secrets again and rewrite
+                  /etc/media-butler/config.toml (the default only asks on
+                  the first install)
+USAGE
+            exit 0
+            ;;
+        *) die "unknown option: $argument" ;;
+    esac
+done
 
 [[ $EUID -eq 0 ]] || die "run this installer with sudo"
 
@@ -78,25 +126,26 @@ fi
 "$INSTALL_DIR/venv/bin/pip" install --quiet --upgrade pip
 "$INSTALL_DIR/venv/bin/pip" install --quiet --upgrade "$INSTALL_DIR"
 
-if [[ ! -f "$CONFIG_FILE" ]]; then
+if [[ ! -f "$CONFIG_FILE" || "$RECONFIGURE" -eq 1 ]]; then
     say "Initial configuration"
     echo "The paths must exist; I will create them if needed."
-    read -r -p "Download inbox           : " INBOX
-    read -r -p "Kids destination         : " KIDS
-    read -r -p "Movies destination       : " MOVIES
-    read -r -p "Series destination       : " SERIES
-    read -r -p "Emby URL (empty = none)  : " EMBY_URL
+    ask "Download inbox           : " INBOX
+    ask "Kids destination         : " KIDS
+    ask "Movies destination       : " MOVIES
+    ask "Series destination       : " SERIES
+    ask "Emby URL (empty = none)  : " EMBY_URL
     if [[ -n "$EMBY_URL" ]]; then
-        read -r -s -p "Emby API key             : " EMBY_KEY
-        echo
+        ask_secret "Emby API key             : " EMBY_KEY
     fi
-    read -r -s -p "Bot token (BotFather)    : " BOT_TOKEN
-    echo
-    [[ -n "$BOT_TOKEN" ]] || die "the token cannot be empty"
-    read -r -p "Your Telegram user_id (empty = discover with /start): " OWNER_ID
+    ask_secret "Bot token (BotFather)    : " BOT_TOKEN
+    ask "Your Telegram user_id (empty = discover with /start): " OWNER_ID
 
     [[ -n "$INBOX" && -n "$KIDS" && -n "$MOVIES" && -n "$SERIES" ]] \
         || die "all four paths are required"
+    [[ "$INBOX" == /* ]] || die "the inbox must be an absolute path: $INBOX"
+    [[ "$KIDS" == /* ]] || die "the kids destination must be an absolute path: $KIDS"
+    [[ "$MOVIES" == /* ]] || die "the movies destination must be an absolute path: $MOVIES"
+    [[ "$SERIES" == /* ]] || die "the series destination must be an absolute path: $SERIES"
     for dir in "$INBOX" "$KIDS" "$MOVIES" "$SERIES"; do
         mkdir -p -m 755 "$dir"
     done
@@ -106,14 +155,25 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
     fi
 
     umask 077
-    install -m 600 /dev/null "$CONFIG_DIR/token"
-    printf '%s' "$BOT_TOKEN" > "$CONFIG_DIR/token"
+    if [[ -z "$BOT_TOKEN" && -f "$CONFIG_DIR/token" ]]; then
+        say "Keeping the existing token at $CONFIG_DIR/token"
+    else
+        [[ -n "$BOT_TOKEN" ]] || die "the token cannot be empty"
+        [[ "$BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]] \
+            || die "that does not look like a BotFather token (expected 123456789:AA...)"
+        install -m 600 /dev/null "$CONFIG_DIR/token"
+        printf '%s' "$BOT_TOKEN" > "$CONFIG_DIR/token"
+    fi
 
     EMBY_ENABLED="false"
     if [[ -n "$EMBY_URL" ]]; then
-        [[ -n "${EMBY_KEY:-}" ]] || die "an Emby URL requires an API key"
-        install -m 600 /dev/null "$CONFIG_DIR/emby.key"
-        printf '%s' "$EMBY_KEY" > "$CONFIG_DIR/emby.key"
+        if [[ -z "${EMBY_KEY:-}" && -f "$CONFIG_DIR/emby.key" ]]; then
+            say "Keeping the existing Emby API key"
+        else
+            [[ -n "${EMBY_KEY:-}" ]] || die "an Emby URL requires an API key"
+            install -m 600 /dev/null "$CONFIG_DIR/emby.key"
+            printf '%s' "$EMBY_KEY" > "$CONFIG_DIR/emby.key"
+        fi
         EMBY_ENABLED="true"
     fi
 
@@ -173,27 +233,37 @@ PY
         warn "into $CONFIG_FILE and run: systemctl restart media-butler"
     fi
 else
-    say "Existing configuration at $CONFIG_FILE (leaving it untouched)"
+    say "Existing configuration at $CONFIG_FILE (leaving it untouched; use --reconfigure to change it)"
 fi
 
 say "Generating systemd unit"
-READWRITE="$("$INSTALL_DIR/venv/bin/python" - "$CONFIG_FILE" <<'PY'
+if ! READWRITE="$("$INSTALL_DIR/venv/bin/python" - "$CONFIG_FILE" <<'PY'
 import sys
 
-from media_butler.config import load_config
+from media_butler.config import ConfigError, load_config
 
-config = load_config(sys.argv[1])
+try:
+    config = load_config(sys.argv[1])
+except ConfigError as exc:
+    print(f"error: {exc}", file=sys.stderr)
+    raise SystemExit(1)
 paths = {config.paths.inbox, *config.paths.destinations.values(), config.database.parent}
 
 
 def unit_quote(path: str) -> str:
-    escaped = path.replace("\\", "\\\\").replace('"', '\\"')
+    # systemd expands % specifiers and uses \ and " for quoting, so escape
+    # all three before wrapping the path in double quotes.
+    escaped = (
+        path.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    )
     return f'-"{escaped}"'
 
 
 print(" ".join(unit_quote(path) for path in sorted(map(str, paths))))
 PY
-)"
+)"; then
+    die "the configuration is invalid (see the message above); fix $CONFIG_FILE or run again with --reconfigure"
+fi
 
 "$INSTALL_DIR/venv/bin/python" - "$ROOT_DIR/deploy/media-butler.service" "$SERVICE_FILE" \
     "$INSTALL_DIR" "$READWRITE" <<'PY'
@@ -209,6 +279,13 @@ PY
 chmod 644 "$SERVICE_FILE"
 
 say "Validating installation"
+if LC_ALL=C grep -n '[[:cntrl:]]' "$SERVICE_FILE"; then
+    die "control character found in $SERVICE_FILE (lines above); run again with --reconfigure"
+fi
+if command -v systemd-analyze >/dev/null; then
+    systemd-analyze verify "$SERVICE_FILE" \
+        || die "systemd rejected $SERVICE_FILE (see the messages above); run again with --reconfigure"
+fi
 "$INSTALL_DIR/venv/bin/media-butler" --config "$CONFIG_FILE" --check
 
 say "Starting service"
@@ -217,6 +294,9 @@ systemctl enable media-butler >/dev/null
 systemctl restart media-butler
 sleep 2
 systemctl --no-pager --lines=15 status media-butler || true
+if ! systemctl is-active --quiet media-butler; then
+    warn "media-butler is not running; inspect it with: journalctl -u media-butler -n 50"
+fi
 
 cat <<EOF
 
