@@ -711,12 +711,16 @@ class MediaButlerBot:
     ) -> None:
         if self.application is None:
             return
+        # Telegram keeps the previous inline keyboard when reply_markup is
+        # omitted, so an explicit empty keyboard is needed to remove it once
+        # the batch has been handled.
+        markup = keyboard if keyboard is not None else InlineKeyboardMarkup([])
         try:
             await self.application.bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
                 text=text,
-                reply_markup=keyboard,
+                reply_markup=markup,
             )
         except BadRequest as exc:
             if "not modified" not in str(exc).lower():

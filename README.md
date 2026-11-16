@@ -163,6 +163,10 @@ Each pending batch shows:
 Blocked archives (password, unsafe paths, no videos or not enough space) show
 **🔄 Retry** in addition to **Ignore**.
 
+Once you press a destination or **Ignore**, the message is rewritten with the
+result (`✅ “name” → 🎬 Movies` and the final path) and the keyboard is removed,
+so the same batch cannot be answered twice by accident.
+
 If a move fails, the message shows the error and the buttons stay active so you
 can retry.
 

@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from telegram import InlineKeyboardMarkup
 
 from media_butler import organizer
 from media_butler.bot import MediaButlerBot
@@ -14,6 +15,7 @@ class FakeBot:
     def __init__(self) -> None:
         self.sent: list[tuple[int, str]] = []
         self.edits: list[tuple[int, int, str]] = []
+        self.markups: list = []
 
     async def send_message(self, chat_id, text, reply_markup=None):
         self.sent.append((chat_id, text))
@@ -21,6 +23,7 @@ class FakeBot:
 
     async def edit_message_text(self, chat_id, message_id, text, reply_markup=None):
         self.edits.append((chat_id, message_id, text))
+        self.markups.append(reply_markup)
 
 
 def make_bot(build_config, tmp_path: Path) -> tuple[MediaButlerBot, Database, FakeBot]:
@@ -240,3 +243,46 @@ async def test_manual_scan_reports_batches_already_waiting(build_config, tmp_pat
 
     assert "already" in fake.edits[-1][2]
     assert "1 batch(es) ready" in fake.edits[-1][2]
+
+
+@pytest.mark.asyncio
+async def test_move_removes_the_inline_keyboard(build_config, tmp_path: Path):
+    bot, db, fake = make_bot(build_config, tmp_path)
+    source = bot.config.paths.inbox / "Movie.2021"
+    source.mkdir()
+    (source / "movie.mkv").write_text("data")
+    item = add_pending(db, source)
+
+    await bot._handle_move(query(), item.id, "movies")
+
+    assert isinstance(fake.markups[-1], InlineKeyboardMarkup)
+    assert not fake.markups[-1].inline_keyboard
+
+
+@pytest.mark.asyncio
+async def test_ignore_removes_the_inline_keyboard(build_config, tmp_path: Path):
+    bot, db, fake = make_bot(build_config, tmp_path)
+    source = bot.config.paths.inbox / "Movie.2021"
+    source.mkdir()
+    (source / "movie.mkv").write_text("data")
+    item = add_pending(db, source)
+
+    await bot._handle_ignore(query(), item.id)
+
+    assert not fake.markups[-1].inline_keyboard
+
+
+@pytest.mark.asyncio
+async def test_second_click_on_a_finished_batch_clears_the_keyboard(build_config, tmp_path: Path):
+    bot, db, fake = make_bot(build_config, tmp_path)
+    source = bot.config.paths.inbox / "Movie.2021"
+    source.mkdir()
+    (source / "movie.mkv").write_text("data")
+    item = add_pending(db, source)
+
+    await bot._handle_move(query(), item.id, "movies")
+    await bot._handle_move(query(), item.id, "series")
+
+    assert "no longer pending" in fake.edits[-1][2]
+    assert not fake.markups[-1].inline_keyboard
+    assert db.get(item.id).dest == "movies"
