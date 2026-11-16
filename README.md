@@ -20,7 +20,7 @@ INBOX ──► archive? ──yes──► 7z (with zip-slip validation)
 
 ## What it does
 
-- Scans the inbox every 5 minutes (or immediately with `/scan`).
+- Scans the inbox every hour by default (or immediately with `/scan`).
 - Waits until a file or folder stops changing before touching it (in-progress
   downloads, `.part`, `.crdownload`, `.aria2`, `.!qB`…).
 - Extracts `zip`, `rar`, `7z`, `tar`, `tar.gz`, `tar.bz2`, `tar.xz`, `tgz`…
@@ -99,7 +99,7 @@ File: `/etc/media-butler/config.toml` (full example in
 | `telegram.chat_id` | first allowed user | chat where prompts are sent |
 | `paths.inbox` | — | watched folder |
 | `paths.kids` / `movies` / `series` | — | destinations; must exist |
-| `scan.interval_seconds` | `300` | scan frequency (min. 30) |
+| `scan.interval_seconds` | `3600` | scan frequency (min. 30) |
 | `scan.settle_seconds` | `120` | unchanged time before touching anything |
 | `scan.max_pending` | `10` | unanswered prompts before scanning pauses |
 | `scan.max_entries` | `100000` | limit when sizing a directory |

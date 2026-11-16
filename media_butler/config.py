@@ -291,7 +291,7 @@ def load_config(path: str | os.PathLike[str] | None = None, *, check_paths: bool
             raise ConfigError(f"paths.{name} and paths.inbox cannot be nested inside each other")
 
     scan = ScanConfig(
-        interval_seconds=_get_int(scan_table, "interval_seconds", 300, minimum=30),
+        interval_seconds=_get_int(scan_table, "interval_seconds", 3600, minimum=30),
         settle_seconds=_get_int(scan_table, "settle_seconds", 120, minimum=0),
         max_pending=_get_int(scan_table, "max_pending", 10, minimum=1),
         max_entries=_get_int(scan_table, "max_entries", 100_000, minimum=1),

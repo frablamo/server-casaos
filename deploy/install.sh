@@ -141,7 +141,7 @@ movies = {quote(movies)}
 series = {quote(series)}
 
 [scan]
-interval_seconds = 300
+interval_seconds = 3600
 settle_seconds = 120
 max_pending = 10
 max_entries = 100000
