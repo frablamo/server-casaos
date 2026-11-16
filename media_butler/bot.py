@@ -588,17 +588,35 @@ class MediaButlerBot:
                 message.chat_id, message.message_id, "⏳ A scan is already running."
             )
             return
+        awaiting = self.db.awaiting_count()
+        if awaiting >= self.config.scan.max_pending:
+            await self._edit_ids(
+                message.chat_id,
+                message.message_id,
+                f"⏳ The queue is full ({awaiting} waiting, limit "
+                f"{self.config.scan.max_pending}). Answer or ignore those prompts first.",
+            )
+            return
         try:
             total, added = await self.scan_and_notify()
         except Exception as exc:  # noqa: BLE001
             log.exception("manual scan failed")
             await self._edit_ids(message.chat_id, message.message_id, f"❌ Error: {exc}")
             return
-        await self._edit_ids(
-            message.chat_id,
-            message.message_id,
-            f"✅ Scan finished: {total} batch(es) ready, {added} new prompt(s).",
-        )
+        if total == 0:
+            text = (
+                "✅ Scan finished: nothing new. A file must be seen unchanged on two "
+                f"scans at least {self.config.scan.settle_seconds}s apart, so wait "
+                "and send /scan again."
+            )
+        elif added == 0:
+            text = (
+                f"✅ Scan finished: {total} batch(es) ready, but they are already "
+                "waiting for an answer (see /status)."
+            )
+        else:
+            text = f"✅ Scan finished: {total} batch(es) ready, {added} new prompt(s)."
+        await self._edit_ids(message.chat_id, message.message_id, text)
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not self._is_allowed(update.effective_user):

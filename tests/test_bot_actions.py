@@ -197,3 +197,46 @@ async def test_start_in_a_private_chat_does_not_show_a_chat_id(build_config, tmp
     await bot.cmd_start(update, SimpleNamespace())
 
     assert "chat_id is" not in message.replies[0]
+
+
+def scan_message():
+    return SimpleNamespace(chat_id=111, message_id=42)
+
+
+@pytest.mark.asyncio
+async def test_manual_scan_reports_a_full_queue(build_config, tmp_path: Path):
+    bot, db, fake = make_bot(build_config, tmp_path)
+    for index in range(bot.config.scan.max_pending):
+        add_pending(db, tmp_path / f"item{index}", item_id=f"{index:08x}")
+
+    await bot._manual_scan(scan_message())
+
+    assert "queue is full" in fake.edits[-1][2]
+
+
+@pytest.mark.asyncio
+async def test_manual_scan_explains_that_nothing_is_new(build_config, tmp_path: Path):
+    bot, _, fake = make_bot(build_config, tmp_path)
+
+    await bot._manual_scan(scan_message())
+
+    assert "nothing new" in fake.edits[-1][2]
+    assert "/scan again" in fake.edits[-1][2]
+
+
+@pytest.mark.asyncio
+async def test_manual_scan_reports_batches_already_waiting(build_config, tmp_path: Path):
+    from media_butler.scanner import Scanner
+
+    bot, db, fake = make_bot(build_config, tmp_path)
+    folder = bot.config.paths.inbox / "Show.S01"
+    folder.mkdir()
+    (folder / "e01.mkv").write_text("data")
+    fingerprint = Scanner(bot.config, db)._tree_signature(folder).token()
+    add_pending(db, folder, fingerprint=fingerprint, display_name="Show.S01")
+
+    await bot._manual_scan(scan_message())
+    await bot._manual_scan(scan_message())
+
+    assert "already" in fake.edits[-1][2]
+    assert "1 batch(es) ready" in fake.edits[-1][2]

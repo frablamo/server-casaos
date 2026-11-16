@@ -244,6 +244,7 @@ sudo rm -rf /opt/media-butler
 | `7z: ✗ not found` | install `p7zip-full` (Debian/Ubuntu) or set the `7zz` path in `scan.seven_zip` |
 | `Permission denied` while moving | the service must run as root; check `ProtectSystem`/`ReadWritePaths` and run `--check` with sudo |
 | The bot does not respond | check the token, `journalctl` and that no other instance uses the same token (Telegram allows only one polling) |
+| `/scan` says `0 batch(es) ready` | run `sudo /opt/media-butler/venv/bin/python deploy/diagnose.py`; it prints the inbox the service uses, the queue state and why each folder is skipped (no videos, `.part` file, ignored before, full queue) |
 | `Conflict: terminated by other getUpdates` | two processes are using the same token; stop one (`systemctl stop media-butler` before a `--dry-run`) |
 | `Not authorized` | add your `user_id` to `allowed_users` and restart |
 | `media-butler.service` fails to load, `invalid` / `non-printable` / `Failed to extract first word` | a path contains an invisible character (CR from a Windows clipboard, zero-width space, non-breaking space). Run `sudo ./deploy/install.sh --reconfigure` and retype the paths, or fix `[paths]` in `/etc/media-butler/config.toml` by hand. `--check` now reports the exact `U+XXXX` character. |
