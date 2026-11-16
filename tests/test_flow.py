@@ -113,3 +113,74 @@ def test_delete_archive_false_keeps_the_compressed_file(build_config, tmp_path: 
 
     bot._cleanup_archive(item)
     assert archive_path.exists()
+
+
+def test_cleanup_archive_removes_all_rar_volumes(build_config, tmp_path: Path):
+    config = build_config()
+    db = Database(tmp_path / "state.db")
+    bot = MediaButlerBot(config, db)
+    part1 = config.paths.inbox / "Movie.part1.rar"
+    part1.write_text("1")
+    part2 = config.paths.inbox / "Movie.part2.rar"
+    part2.write_text("2")
+    item = db.add_item(
+        item_id="a1b2c3d4",
+        source=str(config.paths.inbox / "_extracted" / "Movie-abc"),
+        kind="archive",
+        display_name="Movie",
+        size_bytes=1,
+        video_count=1,
+        fingerprint="fp",
+        archive_path=str(part1),
+        status="done",
+    )
+
+    bot._cleanup_archive(item)
+
+    assert not part1.exists()
+    assert not part2.exists()
+
+
+def test_startup_cleanup_removes_archive_left_after_a_crash(build_config, tmp_path: Path):
+    config = build_config()
+    db = Database(tmp_path / "state.db")
+    bot = MediaButlerBot(config, db)
+    archive_path = config.paths.inbox / "Movie.zip"
+    archive_path.write_text("archive")
+    db.add_item(
+        item_id="a1b2c3d4",
+        source=str(config.paths.inbox / "_extracted" / "Movie-abc"),
+        kind="archive",
+        display_name="Movie",
+        size_bytes=1,
+        video_count=1,
+        fingerprint="fp",
+        archive_path=str(archive_path),
+        status="done",
+    )
+
+    assert bot._cleanup_finished_archives() == 1
+    assert not archive_path.exists()
+
+
+def test_cleanup_archive_does_nothing_in_dry_run(build_config, tmp_path: Path):
+    config = build_config(dry_run=True)
+    db = Database(tmp_path / "state.db")
+    bot = MediaButlerBot(config, db)
+    archive_path = config.paths.inbox / "Movie.zip"
+    archive_path.write_text("archive")
+    item = db.add_item(
+        item_id="a1b2c3d4",
+        source=str(config.paths.inbox / "_extracted" / "Movie-abc"),
+        kind="archive",
+        display_name="Movie",
+        size_bytes=1,
+        video_count=1,
+        fingerprint="fp",
+        archive_path=str(archive_path),
+        status="done",
+    )
+
+    bot._cleanup_archive(item)
+
+    assert archive_path.exists()

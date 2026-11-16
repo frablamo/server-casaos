@@ -33,8 +33,8 @@ INBOX ──► archive? ──yes──► 7z (with zip-slip validation)
 - Moves with `rename` on the same filesystem; across filesystems it copies to a
   hidden temporary sibling, renames it into place, then deletes the source. A
   power cut leaves no silent garbage: startup reconciles it.
-- Deletes the archive once all its content moved successfully
-  (`delete_archive = false` to keep it).
+- Deletes the archive (and every volume of a multi-part RAR) once all its
+  content moved successfully (`delete_archive = false` to keep it).
 - Refreshes the **Emby** library after every move.
 - `/reboot` restarts the whole server with confirmation, a cancellable
   countdown and a notification when it is back online.
@@ -115,6 +115,11 @@ File: `/etc/media-butler/config.toml` (full example in
 
 The extension lists (`video_extensions`, `archive_extensions`, `skip_suffixes`)
 can be overridden in `[scan]`; the defaults already cover the usual cases.
+
+A new file is offered only after it has been seen unchanged on two consecutive
+scans (the second one at least `settle_seconds` after the first). With the
+default hourly interval that means new content shows up after roughly 1–2
+hours; use `/scan` or lower `interval_seconds` if you want it sooner.
 
 Paths and token are validated on startup. If a directory or the token is
 missing, the service will not start and the error appears in `journalctl`.

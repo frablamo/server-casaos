@@ -45,6 +45,14 @@ def test_destination_path_keeps_extension(tmp_path: Path):
     assert organizer.destination_path(root, "movie.mkv").name == "movie (1).mkv"
 
 
+def test_destination_path_keeps_dotted_folder_name(tmp_path: Path):
+    root = tmp_path / "Movies"
+    root.mkdir()
+    (root / "Dune.2021").mkdir()
+    planned = organizer.destination_path(root, "Dune.2021", keep_suffix=False)
+    assert planned.name == "Dune.2021 (1)"
+
+
 def test_move_file(tmp_path: Path):
     source = tmp_path / "inbox" / "movie.mkv"
     source.parent.mkdir()

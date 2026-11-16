@@ -20,7 +20,7 @@ from telegram.error import BadRequest, TelegramError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from . import callbacks, organizer
-from .archive import cleanup_incomplete, extraction_target, remove_extraction
+from .archive import cleanup_incomplete, extraction_target, remove_extraction, volume_files
 from .config import Config
 from .db import Database, Item
 from .emby import EmbyClient
@@ -95,14 +95,18 @@ class MediaButlerBot:
             self.config.paths.inbox,
             *self.config.paths.destinations.values(),
         )
-        repaired = self.db.reconcile_moving(delete_source=organizer.remove_source)
+        repaired = self.db.reconcile_moving(
+            delete_source=None if self.config.behavior.dry_run else organizer.remove_source
+        )
         purged = self.db.purge_old(30)
+        archives = await asyncio.to_thread(self._cleanup_finished_archives)
         await asyncio.to_thread(cleanup_incomplete, self.config.extract_dir)
         log.info(
-            "maintenance: temp=%d reconciled=%s purged=%d",
+            "maintenance: temp=%d reconciled=%s purged=%d archives=%d",
             removed,
             repaired,
             purged,
+            archives,
         )
 
         boot_requested = self.db.state_get("boot_notify") == "1"
@@ -173,7 +177,7 @@ class MediaButlerBot:
                 log.exception("scan failed")
             await asyncio.sleep(self.config.scan.interval_seconds)
 
-    async def scan_and_notify(self) -> tuple[int, int]:
+    async def scan_and_notify(self, force: set[str] | None = None) -> tuple[int, int]:
         if not self.config.telegram.can_send:
             return 0, 0
         async with self.scan_lock:
@@ -182,7 +186,7 @@ class MediaButlerBot:
                 log.info("queue full (%d waiting), skipping scan", self.db.awaiting_count())
                 return 0, 0
 
-            batches = await asyncio.to_thread(self.scanner.scan_once)
+            batches = await asyncio.to_thread(self.scanner.scan_once, force)
             added = 0
             for batch in batches:
                 if self.db.awaiting_count() >= self.config.scan.max_pending:
@@ -314,10 +318,21 @@ class MediaButlerBot:
 
         root = self.config.paths.destinations[destination]
         label = callbacks.DESTINATION_LABELS[destination]
-        self.db.set_status(item.id, "moving", dest=destination, error=None)
-        await self._edit(query, f"⏳ Moving “{item.display_name}” to {label}…")
 
         async with self.move_lock:
+            # Re-read under the lock: a second click may have arrived while
+            # another move was in progress, or the item may have been ignored.
+            item = self.db.get(item_id)
+            if item is None or item.status != "pending":
+                await self._edit(query, "This batch is no longer pending.")
+                return
+            planned = organizer.plan_destination(Path(item.source), root, item.display_name)
+            # Persist the destination before touching the disk: if the process
+            # dies mid-move, startup reconciliation can tell where it went.
+            self.db.set_status(
+                item.id, "moving", dest=destination, final_path=str(planned), error=None
+            )
+            await self._edit(query, f"⏳ Moving “{item.display_name}” to {label}…")
             try:
                 final = await asyncio.to_thread(
                     organizer.move_to_destination,
@@ -326,6 +341,7 @@ class MediaButlerBot:
                     item.display_name,
                     item.id,
                     dry_run=self.config.behavior.dry_run,
+                    destination=planned,
                 )
             except Exception as exc:  # noqa: BLE001
                 log.exception("failed to move %s", item.source)
@@ -381,13 +397,20 @@ class MediaButlerBot:
         self.db.delete(item.id)
         await self._edit(query, f"🔄 Retrying “{item.display_name}”…")
         self._spawn(
-            self._retry_scan(query.message.chat_id, query.message.message_id, item.display_name),
+            self._retry_scan(
+                query.message.chat_id,
+                query.message.message_id,
+                item.display_name,
+                item.archive_path or item.source,
+            ),
             "media-butler-retry",
         )
 
-    async def _retry_scan(self, chat_id: int, message_id: int, name: str) -> None:
+    async def _retry_scan(
+        self, chat_id: int, message_id: int, name: str, source: str | None = None
+    ) -> None:
         try:
-            _, added = await self.scan_and_notify()
+            _, added = await self.scan_and_notify(force={source} if source else None)
         except Exception as exc:  # noqa: BLE001
             log.exception("retry failed for %s", name)
             await self._edit_ids(chat_id, message_id, f"❌ Retry failed: {str(exc)[:300]}")
@@ -407,6 +430,9 @@ class MediaButlerBot:
         if not item.archive_path:
             return
         archive_path = Path(item.archive_path)
+        if self.config.behavior.dry_run:
+            log.info("[dry-run] would have cleaned up %s", archive_path)
+            return
         remove_extraction(Path(item.source), self.config.extract_dir)
         if not self.config.behavior.delete_archive:
             return
@@ -414,13 +440,33 @@ class MediaButlerBot:
             return
         if self.db.archive_has_ignored_items(str(archive_path)):
             return
-        try:
-            archive_path.unlink()
-            log.info("archive deleted: %s", archive_path)
-        except FileNotFoundError:
-            pass
-        except OSError as exc:
-            log.warning("could not delete the archive %s: %s", archive_path, exc)
+        for path in volume_files(archive_path):
+            try:
+                path.unlink()
+                log.info("archive deleted: %s", path)
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                log.warning("could not delete the archive %s: %s", path, exc)
+
+    def _cleanup_finished_archives(self) -> int:
+        """Delete archives whose move finished before the process crashed.
+
+        ``_cleanup_archive`` normally runs right after a successful move; if
+        the service dies in that window the archive would otherwise stay in
+        the inbox forever, because its row is already ``done``.
+        """
+        removed = 0
+        for item in self.db.items_with_status("done"):
+            if not item.archive_path:
+                continue
+            archive_path = Path(item.archive_path)
+            if not archive_path.exists():
+                continue
+            self._cleanup_archive(item)
+            if not archive_path.exists():
+                removed += 1
+        return removed
 
     # ---------------------------------------------------------------- reboot
     async def _handle_reboot_action(self, query, token: str, action: str) -> None:  # noqa: ANN001

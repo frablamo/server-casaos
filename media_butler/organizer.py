@@ -22,22 +22,34 @@ log = logging.getLogger(__name__)
 TEMP_PREFIX = ".mb-tmp-"
 
 
-def destination_path(root: Path, name: str) -> Path:
+def destination_path(root: Path, name: str, *, keep_suffix: bool = True) -> Path:
     """Return a non-existing path inside ``root`` for ``name``.
 
     Existing names get a `` (1)``, `` (2)``… suffix; nothing is overwritten.
+    ``keep_suffix`` keeps a file extension in front of the counter
+    (``movie (1).mkv``); directories pass ``False`` so release names such as
+    ``Dune.2021`` become ``Dune.2021 (1)`` instead of ``Dune (1).2021``.
     """
     clean = safe_component(name, limit=160)
     candidate = root / clean
     if not candidate.exists():
         return candidate
-    stem = candidate.stem
-    suffix = candidate.suffix
+    stem = candidate.stem if keep_suffix else clean
+    suffix = candidate.suffix if keep_suffix else ""
     for index in range(1, 10_000):
         candidate = root / f"{stem} ({index}){suffix}"
         if not candidate.exists():
             return candidate
     raise FileExistsError(f"no free name for {clean} in {root}")
+
+
+def plan_destination(source: Path, root: Path, display_name: str) -> Path:
+    """Destination for ``source``, decided before the move starts.
+
+    The bot persists this path so an interrupted move can be reconciled
+    against the disk instead of guessing where the data ended up.
+    """
+    return destination_path(root, display_name, keep_suffix=not source.is_dir())
 
 
 def _copy(src: Path, tmp: Path) -> None:
@@ -99,8 +111,13 @@ def move_to_destination(
     item_id: str,
     *,
     dry_run: bool = False,
+    destination: Path | None = None,
 ) -> Path:
-    dst = destination_path(destination_root, display_name)
+    dst = (
+        destination
+        if destination is not None
+        else plan_destination(source, destination_root, display_name)
+    )
     if dry_run:
         log.info("[dry-run] would have moved %s → %s", source, dst)
         return dst
@@ -115,7 +132,11 @@ def cleanup_temp_dirs(*roots: Path) -> int:
         for child in root.iterdir():
             if child.name.startswith(TEMP_PREFIX):
                 log.warning("removing leftover temporary move %s", child)
-                _delete(child)
+                try:
+                    _delete(child)
+                except OSError as exc:
+                    log.warning("could not remove %s: %s", child, exc)
+                    continue
                 removed += 1
     return removed
 

@@ -98,12 +98,19 @@ class Scanner:
                     videos += 1
         return Signature(count, size, newest, videos, partial)
 
-    def _is_stable(self, path: Path, signature: Signature, now: float) -> bool:
+    def _is_stable(
+        self, path: Path, signature: Signature, now: float, *, force: bool = False
+    ) -> bool:
         if signature.partial:
             self._seen.pop(str(path), None)
             return False
         if signature.count == 0 or signature.size_bytes <= 0:
             return False
+        if force:
+            # The user explicitly retried this batch; do not make them wait
+            # for another full scan (which can be an hour away).
+            self._seen.pop(str(path), None)
+            return True
         key = str(path)
         token = signature.token()
         previous = self._seen.get(key)
@@ -113,7 +120,8 @@ class Scanner:
         return now - previous[1] >= self.config.scan.settle_seconds
 
     # ------------------------------------------------------------------ scan
-    def scan_once(self) -> list[Batch]:
+    def scan_once(self, force: set[str] | None = None) -> list[Batch]:
+        forced = {str(path) for path in (force or ())}
         inbox = self.config.paths.inbox
         try:
             with os.scandir(inbox) as iterator:
@@ -142,11 +150,11 @@ class Scanner:
 
             try:
                 if path.is_dir():
-                    batch = self._folder_batch(path, now)
+                    batch = self._folder_batch(path, now, str(path) in forced)
                 elif self.config.scan.is_archive(name):
-                    batch = self._archive_batch(path, now)
+                    batch = self._archive_batch(path, now, str(path) in forced)
                 elif self.config.scan.is_video(name):
-                    batch = self._video_batch(path, now)
+                    batch = self._video_batch(path, now, str(path) in forced)
                 else:
                     log.debug("ignoring non-media file: %s", path)
                     continue
@@ -164,9 +172,9 @@ class Scanner:
         return batches
 
     # ----------------------------------------------------------------- batches
-    def _folder_batch(self, path: Path, now: float) -> Batch | None:
+    def _folder_batch(self, path: Path, now: float, force: bool = False) -> Batch | None:
         signature = self._tree_signature(path)
-        if not self._is_stable(path, signature, now):
+        if not self._is_stable(path, signature, now, force=force):
             return None
         if signature.video_count == 0:
             log.debug("folder without videos, leaving it in the inbox: %s", path)
@@ -182,9 +190,9 @@ class Scanner:
             fingerprint=signature.token(),
         )
 
-    def _video_batch(self, path: Path, now: float) -> Batch | None:
+    def _video_batch(self, path: Path, now: float, force: bool = False) -> Batch | None:
         signature = self._file_signature(path)
-        if not self._is_stable(path, signature, now):
+        if not self._is_stable(path, signature, now, force=force):
             return None
         if self.db.should_skip(str(path), signature.token()):
             return None
@@ -197,7 +205,7 @@ class Scanner:
             fingerprint=signature.token(),
         )
 
-    def _archive_batch(self, path: Path, now: float) -> Batch | None:
+    def _archive_batch(self, path: Path, now: float, force: bool = False) -> Batch | None:
         if is_secondary_volume(path.name):
             log.debug("secondary volume of a multi-part archive, ignoring: %s", path)
             return None
@@ -206,7 +214,7 @@ class Scanner:
             return None
 
         signature = self._file_signature(path)
-        if not self._is_stable(path, signature, now):
+        if not self._is_stable(path, signature, now, force=force):
             return None
 
         stem = self.config.scan.archive_stem(path.name)

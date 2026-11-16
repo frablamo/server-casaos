@@ -24,6 +24,8 @@ LIST_TIMEOUT = 120
 EXTRACT_TIMEOUT = 6 * 60 * 60
 SPACE_MARGIN = 2 * 1024**3
 DRIVE_RE = re.compile(r"^[A-Za-z]:")
+PART_VOLUME_RE = re.compile(r"^(?P<stem>.+?)\.part\d+\.rar$", re.IGNORECASE)
+OLD_VOLUME_RE = re.compile(r"^(?P<stem>.+?)\.(?:rar|r\d{2,3}|s\d{2,3})$", re.IGNORECASE)
 
 
 class ArchiveError(Exception):
@@ -180,6 +182,39 @@ def _check_free_space(archive: Path, entries: list[ArchiveEntry]) -> None:
 def fingerprint_file(path: Path) -> str:
     stat = path.stat()
     return f"{stat.st_size}:{stat.st_mtime_ns}"
+
+
+def volume_files(archive: Path) -> list[Path]:
+    """Return every file that belongs to ``archive``'s multi-volume set.
+
+    A single-file archive returns just itself.  Both common RAR layouts are
+    recognised: ``foo.part1.rar``/``foo.part2.rar`` and the old
+    ``foo.rar``/``foo.r00``/``foo.s00`` scheme.  The bot uses this to delete
+    all volumes once the contents have been moved, not only the first one.
+    """
+    name = archive.name
+    match = PART_VOLUME_RE.match(name)
+    if match:
+        pattern = re.compile(
+            rf"^{re.escape(match.group('stem'))}\.part\d+\.rar$", re.IGNORECASE
+        )
+    else:
+        match = OLD_VOLUME_RE.match(name)
+        if not match:
+            return [archive]
+        pattern = re.compile(
+            rf"^{re.escape(match.group('stem'))}\.(?:rar|r\d{{2,3}}|s\d{{2,3}})$",
+            re.IGNORECASE,
+        )
+
+    try:
+        siblings = list(archive.parent.iterdir())
+    except OSError:
+        return [archive]
+    return sorted(
+        (path for path in siblings if path.is_file() and pattern.match(path.name)),
+        key=lambda path: path.name,
+    )
 
 
 def extraction_name(stem: str, fingerprint: str) -> str:

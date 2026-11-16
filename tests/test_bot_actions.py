@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from media_butler import organizer
 from media_butler.bot import MediaButlerBot
 from media_butler.db import Database
 
@@ -70,6 +71,32 @@ async def test_handle_move_moves_and_marks_done(build_config, tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_final_path_is_saved_before_the_move(build_config, tmp_path: Path, monkeypatch):
+    bot, db, fake = make_bot(build_config, tmp_path)
+    source = bot.config.paths.inbox / "Movie.2021"
+    source.mkdir()
+    (source / "movie.mkv").write_text("data")
+    item = add_pending(db, source)
+
+    seen: dict[str, object] = {}
+    real_move = organizer.move_to_destination
+
+    def spy(*args, **kwargs):
+        stored = db.get(item.id)
+        seen["status"] = stored.status
+        seen["final_path"] = stored.final_path
+        return real_move(*args, **kwargs)
+
+    monkeypatch.setattr(organizer, "move_to_destination", spy)
+
+    await bot._handle_move(query(), item.id, "movies")
+
+    planned = bot.config.paths.movies / "Movie.2021"
+    assert seen == {"status": "moving", "final_path": str(planned)}
+    assert db.get(item.id).status == "done"
+
+
+@pytest.mark.asyncio
 async def test_handle_move_rejects_already_done(build_config, tmp_path: Path):
     bot, db, fake = make_bot(build_config, tmp_path)
     source = bot.config.paths.inbox / "Movie"
@@ -116,7 +143,7 @@ async def test_handle_retry_deletes_blocked_item(build_config, tmp_path: Path, m
     archive.write_text("x")
     item = add_pending(db, archive, status="blocked", kind="blocked")
 
-    async def fake_retry_scan(chat_id, message_id, name):
+    async def fake_retry_scan(chat_id, message_id, name, source=None):
         fake.edits.append((chat_id, message_id, "retry-scan"))
 
     monkeypatch.setattr(bot, "_retry_scan", fake_retry_scan)

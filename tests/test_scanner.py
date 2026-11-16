@@ -201,3 +201,29 @@ sys.exit(2)
     assert len(batches) == 1
     assert batches[0].kind == "blocked"
     assert "no videos" in (batches[0].problem or "")
+
+
+def test_forced_scan_skips_the_settle_wait(build_config, tmp_path: Path):
+    config = build_config(settle_seconds=120)
+    folder = config.paths.inbox / "Show.S01"
+    folder.mkdir()
+    (folder / "e01.mkv").write_text("data")
+
+    scanner, _ = make_scanner(config, tmp_path)
+
+    assert scanner.scan_once() == []
+    batches = scanner.scan_once(force={str(folder)})
+    assert len(batches) == 1
+    assert batches[0].source == folder
+
+
+def test_forced_scan_still_refuses_partial_files(build_config, tmp_path: Path):
+    config = build_config(settle_seconds=120)
+    folder = config.paths.inbox / "Show.S01"
+    folder.mkdir()
+    (folder / "e01.mkv").write_text("data")
+    (folder / "e02.mkv.part").write_text("downloading")
+
+    scanner, _ = make_scanner(config, tmp_path)
+
+    assert scanner.scan_once(force={str(folder)}) == []

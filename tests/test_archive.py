@@ -170,3 +170,33 @@ sys.exit(2)
 
     with pytest.raises(archive.PasswordProtected):
         archive.ensure_extracted(source, tmp_path / "_extracted", str(script))
+
+
+def test_volume_files_new_style_rar(tmp_path: Path):
+    (tmp_path / "Movie.part1.rar").write_text("1")
+    (tmp_path / "Movie.part2.rar").write_text("2")
+    (tmp_path / "Movie.part10.rar").write_text("10")
+    (tmp_path / "Other.part1.rar").write_text("x")
+
+    files = archive.volume_files(tmp_path / "Movie.part1.rar")
+
+    assert [path.name for path in files] == [
+        "Movie.part1.rar",
+        "Movie.part10.rar",
+        "Movie.part2.rar",
+    ]
+
+
+def test_volume_files_old_style_rar(tmp_path: Path):
+    for name in ("Show.rar", "Show.r00", "Show.r01", "Show.s00", "Show.mkv"):
+        (tmp_path / name).write_text("x")
+
+    files = archive.volume_files(tmp_path / "Show.rar")
+
+    assert {path.name for path in files} == {"Show.rar", "Show.r00", "Show.r01", "Show.s00"}
+
+
+def test_volume_files_single_archive_is_itself(tmp_path: Path):
+    source = tmp_path / "Movie.mkv"
+    source.write_text("x")
+    assert archive.volume_files(source) == [source]
