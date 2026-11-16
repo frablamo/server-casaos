@@ -101,12 +101,16 @@ class MediaButlerBot:
         purged = self.db.purge_old(30)
         archives = await asyncio.to_thread(self._cleanup_finished_archives)
         await asyncio.to_thread(cleanup_incomplete, self.config.extract_dir)
+        messages = 0
+        if self.config.telegram.can_send and self.config.telegram.delete_finished:
+            messages = await self._delete_finished_messages()
         log.info(
-            "maintenance: temp=%d reconciled=%s purged=%d archives=%d",
+            "maintenance: temp=%d reconciled=%s purged=%d archives=%d messages=%d",
             removed,
             repaired,
             purged,
             archives,
+            messages,
         )
 
         boot_requested = self.db.state_get("boot_notify") == "1"
@@ -364,7 +368,9 @@ class MediaButlerBot:
             return
 
         self.db.set_status(item.id, "done", dest=destination, final_path=str(final), error=None)
-        await self._edit(query, f"✅ “{item.display_name}” → {label}\n{final}")
+        result = f"✅ “{item.display_name}” → {label}\n{final}"
+        if not (self.config.telegram.delete_finished and await self._delete(query)):
+            await self._edit(query, result)
         await self.emby.refresh()
         await asyncio.to_thread(self._cleanup_archive, item)
 
@@ -374,10 +380,11 @@ class MediaButlerBot:
             await self._edit(query, "This batch is no longer pending.")
             return
         self.db.set_status(item.id, "ignored", error=None)
-        await self._edit(
-            query,
-            f"❌ “{item.display_name}” ignored. It stays in {self.config.paths.inbox}.",
-        )
+        if not (self.config.telegram.delete_finished and await self._delete(query)):
+            await self._edit(
+                query,
+                f"❌ “{item.display_name}” ignored. It stays in {self.config.paths.inbox}.",
+            )
         if item.archive_path:
             # The archive itself is untouched, so the extracted copy is redundant.
             try:
@@ -467,6 +474,22 @@ class MediaButlerBot:
             if not archive_path.exists():
                 removed += 1
         return removed
+
+    async def _delete_finished_messages(self, limit: int = 100) -> int:
+        """Remove answered prompts so the chat only shows what is pending.
+
+        Normally the prompt is deleted as soon as the batch is handled; this
+        catches the leftovers of a crash in that window.  ``message_id`` is
+        cleared afterwards so the call is made only once per item.
+        """
+        deleted = 0
+        for item in self.db.items_with_status("done", "ignored", "error")[:limit]:
+            if item.message_id is None:
+                continue
+            if await self._delete_ids(self.config.telegram.chat_id, item.message_id):
+                deleted += 1
+            self.db.update(item.id, message_id=None)
+        return deleted
 
     # ---------------------------------------------------------------- reboot
     async def _handle_reboot_action(self, query, token: str, action: str) -> None:  # noqa: ANN001
@@ -701,6 +724,21 @@ class MediaButlerBot:
         if query.message is None:
             return
         await self._edit_ids(query.message.chat_id, query.message.message_id, text, keyboard)
+
+    async def _delete(self, query) -> bool:  # noqa: ANN001
+        if query.message is None:
+            return False
+        return await self._delete_ids(query.message.chat_id, query.message.message_id)
+
+    async def _delete_ids(self, chat_id: int, message_id: int) -> bool:
+        if self.application is None:
+            return False
+        try:
+            await self.application.bot.delete_message(chat_id=chat_id, message_id=message_id)
+            return True
+        except TelegramError as exc:
+            log.warning("could not delete message %s: %s", message_id, exc)
+            return False
 
     async def _edit_ids(
         self,

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from telegram import InlineKeyboardMarkup
+from telegram.error import TelegramError
 
 from media_butler import organizer
 from media_butler.bot import MediaButlerBot
@@ -16,6 +17,8 @@ class FakeBot:
         self.sent: list[tuple[int, str]] = []
         self.edits: list[tuple[int, int, str]] = []
         self.markups: list = []
+        self.deleted: list[tuple[int, int]] = []
+        self.fail_delete = False
 
     async def send_message(self, chat_id, text, reply_markup=None):
         self.sent.append((chat_id, text))
@@ -25,9 +28,14 @@ class FakeBot:
         self.edits.append((chat_id, message_id, text))
         self.markups.append(reply_markup)
 
+    async def delete_message(self, chat_id, message_id):
+        if self.fail_delete:
+            raise TelegramError("message can't be deleted")
+        self.deleted.append((chat_id, message_id))
 
-def make_bot(build_config, tmp_path: Path) -> tuple[MediaButlerBot, Database, FakeBot]:
-    config = build_config()
+
+def make_bot(build_config, tmp_path: Path, **config_kwargs) -> tuple[MediaButlerBot, Database, FakeBot]:
+    config = build_config(**config_kwargs)
     db = Database(tmp_path / "state.db")
     bot = MediaButlerBot(config, db)
     fake = FakeBot()
@@ -286,3 +294,60 @@ async def test_second_click_on_a_finished_batch_clears_the_keyboard(build_config
     assert "no longer pending" in fake.edits[-1][2]
     assert not fake.markups[-1].inline_keyboard
     assert db.get(item.id).dest == "movies"
+
+
+@pytest.mark.asyncio
+async def test_move_deletes_the_prompt_when_enabled(build_config, tmp_path: Path):
+    bot, db, fake = make_bot(build_config, tmp_path, delete_finished=True)
+    source = bot.config.paths.inbox / "Movie.2021"
+    source.mkdir()
+    (source / "movie.mkv").write_text("data")
+    item = add_pending(db, source)
+
+    await bot._handle_move(query(), item.id, "movies")
+
+    assert fake.deleted == [(111, 5)]
+    assert db.get(item.id).status == "done"
+    assert not any(text.startswith("✅") for _, _, text in fake.edits)
+
+
+@pytest.mark.asyncio
+async def test_ignore_deletes_the_prompt_when_enabled(build_config, tmp_path: Path):
+    bot, db, fake = make_bot(build_config, tmp_path, delete_finished=True)
+    source = bot.config.paths.inbox / "Movie.2021"
+    source.mkdir()
+    (source / "movie.mkv").write_text("data")
+    item = add_pending(db, source)
+
+    await bot._handle_ignore(query(), item.id)
+
+    assert fake.deleted == [(111, 5)]
+    assert db.get(item.id).status == "ignored"
+
+
+@pytest.mark.asyncio
+async def test_move_shows_the_result_when_deletion_fails(build_config, tmp_path: Path):
+    bot, db, fake = make_bot(build_config, tmp_path, delete_finished=True)
+    fake.fail_delete = True
+    source = bot.config.paths.inbox / "Movie.2021"
+    source.mkdir()
+    (source / "movie.mkv").write_text("data")
+    item = add_pending(db, source)
+
+    await bot._handle_move(query(), item.id, "movies")
+
+    assert db.get(item.id).status == "done"
+    assert fake.edits[-1][2].startswith("✅")
+    assert not fake.markups[-1].inline_keyboard
+
+
+@pytest.mark.asyncio
+async def test_delete_finished_messages_clears_the_ids(build_config, tmp_path: Path):
+    bot, db, fake = make_bot(build_config, tmp_path, delete_finished=True)
+    item = add_pending(db, tmp_path / "gone", status="done")
+    db.update(item.id, message_id=77)
+
+    assert await bot._delete_finished_messages() == 1
+
+    assert fake.deleted == [(111, 77)]
+    assert db.get(item.id).message_id is None

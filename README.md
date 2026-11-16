@@ -118,6 +118,7 @@ File: `/etc/media-butler/config.toml` (full example in
 | `telegram.token_file` | — | 600 file with the BotFather token |
 | `telegram.allowed_users` | `[]` | Numeric IDs allowed to use the bot |
 | `telegram.chat_id` | first allowed user | chat where prompts are sent |
+| `telegram.delete_finished` | `true` | delete each prompt once answered, so only pending batches stay in the chat |
 | `paths.inbox` | — | watched folder |
 | `paths.kids` / `movies` / `series` | — | destinations; must exist |
 | `scan.interval_seconds` | `3600` | scan frequency (min. 30) |
@@ -163,9 +164,11 @@ Each pending batch shows:
 Blocked archives (password, unsafe paths, no videos or not enough space) show
 **🔄 Retry** in addition to **Ignore**.
 
-Once you press a destination or **Ignore**, the message is rewritten with the
-result (`✅ “name” → 🎬 Movies` and the final path) and the keyboard is removed,
-so the same batch cannot be answered twice by accident.
+Once you press a destination or **Ignore**, the prompt is deleted
+(`telegram.delete_finished = true`, the default), so the chat only shows the
+batches still waiting. With `delete_finished = false` the message is rewritten
+with the result (`✅ “name” → 🎬 Movies` and the final path) and the keyboard is
+removed instead, keeping a history.
 
 If a move fails, the message shows the error and the buttons stay active so you
 can retry.

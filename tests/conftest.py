@@ -19,6 +19,7 @@ def build_config(tmp_path: Path):
         chat_id: int = 0,
         dry_run: bool = False,
         delete_archive: bool = True,
+        delete_finished: bool = False,
         archive_extensions: tuple[str, ...] | None = None,
         seven_zip: str = "7z",
         extra_scan: str = "",
@@ -47,6 +48,7 @@ database = {json.dumps(str(tmp_path / "state.db"))}
 token_file = {json.dumps(str(token_file))}
 allowed_users = [{users}]
 chat_id = {chat_id}
+delete_finished = {"true" if delete_finished else "false"}
 
 [paths]
 inbox = {json.dumps(str(inbox))}

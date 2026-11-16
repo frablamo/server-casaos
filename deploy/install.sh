@@ -193,6 +193,7 @@ database = "/var/lib/media-butler/state.db"
 token_file = "/etc/media-butler/token"
 allowed_users = {owners}
 chat_id = 0
+delete_finished = true
 
 [paths]
 inbox = {quote(inbox)}

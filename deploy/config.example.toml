@@ -15,6 +15,9 @@ token_file = "/etc/media-butler/token"
 allowed_users = [0]
 # Optional. If 0, the first allowed_users entry is used (private chat).
 chat_id = 0
+# Delete each prompt as soon as you answer it, so the chat only shows what is
+# still waiting. Set to false to keep a history of every move instead.
+delete_finished = true
 
 [paths]
 # All paths must be absolute and must exist before starting.

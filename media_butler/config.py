@@ -175,6 +175,7 @@ class TelegramConfig:
     token: str
     allowed_users: tuple[int, ...]
     chat_id: int
+    delete_finished: bool = True
 
     @property
     def can_send(self) -> bool:
@@ -362,6 +363,7 @@ def load_config(path: str | os.PathLike[str] | None = None, *, check_paths: bool
             token=token,
             allowed_users=allowed_users,
             chat_id=chat_id,
+            delete_finished=_get_bool(telegram_table, "delete_finished", True),
         ),
         paths=PathsConfig(inbox=inbox, kids=kids, movies=movies, series=series),
         scan=scan,
