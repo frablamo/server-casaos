@@ -33,6 +33,7 @@ HELP_TEXT = (
     "🎛 Media Butler\n\n"
     "/scan — check the inbox now\n"
     "/status — queue, free space and status\n"
+    "/resend — send the waiting prompts again\n"
     "/reboot — restart the server (with confirmation)\n"
     "/help — this help\n\n"
     "When something new arrives I will ask whether it goes to Kids, Movies or Series."
@@ -68,6 +69,7 @@ class MediaButlerBot:
         application.add_handler(CommandHandler("help", self.cmd_help))
         application.add_handler(CommandHandler("scan", self.cmd_scan))
         application.add_handler(CommandHandler("status", self.cmd_status))
+        application.add_handler(CommandHandler("resend", self.cmd_resend))
         application.add_handler(CommandHandler("reboot", self.cmd_reboot))
         application.add_handler(CallbackQueryHandler(self.on_callback))
         self.application = application
@@ -163,6 +165,7 @@ class MediaButlerBot:
                 [
                     BotCommand("scan", "Check the inbox now"),
                     BotCommand("status", "Status and free space"),
+                    BotCommand("resend", "Resend waiting prompts"),
                     BotCommand("reboot", "Restart the server"),
                     BotCommand("help", "Help"),
                 ]
@@ -671,6 +674,31 @@ class MediaButlerBot:
             ]
         )
         await update.message.reply_text("\n".join(lines))
+
+    async def cmd_resend(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message is None or not self._is_allowed(update.effective_user):
+            return
+        items = self.db.items_with_status("pending", "blocked")
+        if not items:
+            await update.message.reply_text("Nothing is waiting for an answer.")
+            return
+        sent = 0
+        for item in items:
+            if item.message_id is not None:
+                await self._delete_ids(self.config.telegram.chat_id, item.message_id)
+            # Clear the id first: if sending fails, the next scan retries it.
+            self.db.update(item.id, message_id=None)
+            try:
+                message = await self.send(self._prompt_text(item), self._prompt_keyboard(item))
+            except TelegramError as exc:
+                log.warning("could not resend the prompt for %s: %s", item.source, exc)
+                continue
+            self.db.update(item.id, message_id=message.message_id)
+            sent += 1
+        if sent:
+            await update.message.reply_text(f"🔄 {sent} prompt(s) sent again.")
+        else:
+            await update.message.reply_text("❌ Could not send them; check the log.")
 
     async def cmd_reboot(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not self._is_allowed(update.effective_user):

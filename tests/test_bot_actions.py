@@ -351,3 +351,47 @@ async def test_delete_finished_messages_clears_the_ids(build_config, tmp_path: P
 
     assert fake.deleted == [(111, 77)]
     assert db.get(item.id).message_id is None
+
+
+@pytest.mark.asyncio
+async def test_resend_sends_the_waiting_prompt_again(build_config, tmp_path: Path):
+    bot, db, fake = make_bot(build_config, tmp_path)
+    item = add_pending(db, tmp_path / "gone", display_name="Movie.2021")
+    db.update(item.id, message_id=55)
+    update, message = start_update(111, 111, "private")
+
+    await bot.cmd_resend(update, SimpleNamespace())
+
+    assert fake.deleted == [(111, 55)]
+    assert len(fake.sent) == 1
+    assert "Movie.2021" in fake.sent[0][1]
+    assert db.get(item.id).message_id == 101
+    assert "1 prompt(s)" in message.replies[0]
+
+
+@pytest.mark.asyncio
+async def test_resend_without_pending_says_so(build_config, tmp_path: Path):
+    bot, _, _ = make_bot(build_config, tmp_path)
+    update, message = start_update(111, 111, "private")
+
+    await bot.cmd_resend(update, SimpleNamespace())
+
+    assert "Nothing is waiting" in message.replies[0]
+
+
+@pytest.mark.asyncio
+async def test_resend_clears_the_id_when_sending_fails(build_config, tmp_path: Path):
+    bot, db, fake = make_bot(build_config, tmp_path)
+    item = add_pending(db, tmp_path / "gone", display_name="Movie")
+    db.update(item.id, message_id=55)
+
+    async def fail_send(*args, **kwargs):
+        raise TelegramError("chat not found")
+
+    fake.send_message = fail_send
+    update, message = start_update(111, 111, "private")
+
+    await bot.cmd_resend(update, SimpleNamespace())
+
+    assert db.get(item.id).message_id is None
+    assert "Could not send" in message.replies[0]
